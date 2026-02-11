@@ -2,25 +2,14 @@
 
 No necesitas dominio. Solo la IP publica de tu Droplet.
 
-## 1. Preparacion Local
-
-Genera el build del frontend:
-
-```bash
-cd client
-npm run build
-```
-
-Esto crea la carpeta `client/dist` con la web lista para produccion.
-
-## 2. Crear Droplet en DigitalOcean
+## 1. Crear Droplet en DigitalOcean
 
 1. Entra a [cloud.digitalocean.com](https://cloud.digitalocean.com)
 2. Crea un Droplet con **Ubuntu 22.04** (el plan basico de $6/mes funciona)
-3. Elige autenticacion por **SSH key** o **password**
+3. Elige autenticacion por **SSH key** (recomendado)
 4. Una vez creado, copia la **IP publica** (ej: `143.198.50.10`)
 
-## 3. Configurar el Servidor
+## 2. Configurar el Servidor
 
 Conéctate por SSH:
 
@@ -28,54 +17,38 @@ Conéctate por SSH:
 ssh root@TU_IP
 ```
 
-Instala las dependencias del sistema:
+Instala dependencias del sistema:
 
 ```bash
-apt update && apt install -y nginx nodejs npm
+apt update && apt install -y nginx nodejs npm git
 npm install -g pm2
 ```
 
-## 4. Subir Archivos
-
-Desde tu maquina local, sube los archivos al servidor:
+## 3. Clonar el Repositorio
 
 ```bash
-# Crear carpeta en el servidor
-ssh root@TU_IP "mkdir -p /var/www/chess/dist"
-
-# Subir backend
-scp server.js package.json package-lock.json root@TU_IP:/var/www/chess/
-
-# Subir frontend (build)
-scp -r client/dist/* root@TU_IP:/var/www/chess/dist/
-
-# (Opcional) Subir base de datos si quieres conservar partidas anteriores
-scp chess.db root@TU_IP:/var/www/chess/
+cd /var/www
+git clone git@github.com:Pabloledesma/chess.git
+cd chess
 ```
 
-Estructura final en el servidor:
+> Si usas HTTPS en vez de SSH:
+> `git clone https://github.com/Pabloledesma/chess.git`
 
-```
-/var/www/chess/
-├── server.js
-├── package.json
-├── chess.db
-└── dist/
-    ├── index.html
-    └── assets/
-```
-
-## 5. Instalar Dependencias en el Servidor
+## 4. Instalar Dependencias y Build
 
 ```bash
-ssh root@TU_IP
-cd /var/www/chess
+# Backend
 npm install --production
+
+# Frontend
+cd client
+npm install
+npm run build
+cd ..
 ```
 
-## 6. Configurar Nginx
-
-Crea el archivo de configuracion:
+## 5. Configurar Nginx
 
 ```bash
 sudo nano /etc/nginx/sites-available/chess
@@ -88,7 +61,7 @@ server {
     listen 80;
     server_name _;
 
-    root /var/www/chess/dist;
+    root /var/www/chess/client/dist;
     index index.html;
 
     location / {
@@ -106,19 +79,16 @@ server {
 }
 ```
 
-Activa el sitio y reinicia Nginx:
+Activa el sitio:
 
 ```bash
-# Quitar sitio por defecto de Nginx
 sudo rm -f /etc/nginx/sites-enabled/default
-
-# Activar chess
 sudo ln -s /etc/nginx/sites-available/chess /etc/nginx/sites-enabled/
 sudo nginx -t
 sudo systemctl restart nginx
 ```
 
-## 7. Iniciar el Backend
+## 6. Iniciar el Backend
 
 ```bash
 cd /var/www/chess
@@ -127,7 +97,7 @@ pm2 save
 pm2 startup
 ```
 
-## 8. Jugar
+## 7. Jugar
 
 Abre en el navegador:
 
@@ -135,23 +105,24 @@ Abre en el navegador:
 http://TU_IP?gameId=partida1
 ```
 
-Comparte ese mismo enlace con tu oponente. Ambos eligen nombre y avatar, uno pulsa "Iniciar Partida", y a jugar.
+Comparte ese enlace con tu oponente. Para una partida nueva, cambia el gameId.
 
-Para crear una partida nueva, cambia el `gameId`:
+## Actualizar despues de cambios
 
-```
-http://TU_IP?gameId=partida2
+Cuando hagas cambios en el codigo y los subas a GitHub:
+
+```bash
+ssh root@TU_IP
+cd /var/www/chess
+git pull
+cd client && npm run build && cd ..
+pm2 restart chess-backend
 ```
 
 ## Comandos utiles
 
 ```bash
-# Ver logs del backend
-pm2 logs chess-backend
-
-# Reiniciar backend despues de subir cambios
-pm2 restart chess-backend
-
-# Ver estado
-pm2 status
+pm2 logs chess-backend    # Ver logs
+pm2 restart chess-backend # Reiniciar backend
+pm2 status                # Ver estado
 ```
