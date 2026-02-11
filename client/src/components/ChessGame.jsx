@@ -7,8 +7,9 @@ import MoveHistory from './MoveHistory';
 import LoginModal from './LoginModal';
 import GameInfo from './GameInfo';
 
-// Conexión al socket
-const socket = io('http://localhost:3000');
+// Conexión al socket: en producción usa la misma IP/dominio, en desarrollo usa localhost
+const SOCKET_URL = import.meta.env.PROD ? '/' : 'http://localhost:3000';
+const socket = io(SOCKET_URL);
 
 // Sonidos
 const sounds = {
