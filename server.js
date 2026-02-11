@@ -27,42 +27,46 @@ db.run(`CREATE TABLE IF NOT EXISTS moves (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 )`);
 
-// Almacén de juegos en memoria (caché activo para velocidad)
-// En producción real, validar si queremos reconstruir siempre de DB o mantener en memoria.
-// Aquí: memoria + persistencia asíncrona.
+// Almacén de juegos en memoria
 const games = new Map();
 
-// Cargar juego desde DB o crear nuevo en memoria
+// Configuración de tiempos (10 minutos por defecto)
+const INITIAL_TIME = 600;
+
 function getOrCreateGame(gameId, callback) {
     if (games.has(gameId)) {
         callback(games.get(gameId));
         return;
     }
 
-    // Intentar reconstruir desde DB
     db.all(`SELECT san FROM moves WHERE game_id = ? ORDER BY created_at ASC`, [gameId], (err, rows) => {
         if (err) {
             console.error(err);
-            // Fallback a juego nuevo si falla DB
-            const game = { chess: new Chess(), players: [] };
-            games.set(gameId, game);
-            callback(game);
-            return;
+            return; // Manejar error
         }
 
         const game = {
             chess: new Chess(),
-            players: []
+            players: {
+                white: null, // { socketId, name, avatar }
+                black: null
+            },
+            timers: {
+                white: INITIAL_TIME,
+                black: INITIAL_TIME
+            },
+            turnActive: 'white', // De quién es el turno de MOVER
+            timerActive: false, // Si el reloj está corriendo
+            lastMoveTime: null, // Para calcular delta de tiempo
         };
 
         if (rows && rows.length > 0) {
             rows.forEach(row => {
                 try {
                     game.chess.move(row.san);
-                } catch (e) {
-                    console.error("Error replay move:", row.san, e);
-                }
+                } catch (e) { }
             });
+            game.turnActive = game.chess.turn() === 'w' ? 'white' : 'black';
         }
 
         games.set(gameId, game);
@@ -70,66 +74,143 @@ function getOrCreateGame(gameId, callback) {
     });
 }
 
+function updateTimers(game) {
+    if (!game.timerActive || !game.lastMoveTime) return;
+
+    const now = Date.now();
+    const delta = (now - game.lastMoveTime) / 1000;
+
+    // El turno activo es quien tiene que mover Y pulsar el reloj
+    // Pero en este requerimiento especial: "Despues de que un jugador mueva la ficha debe apretar el boton para dar inicio al turno del siguiente"
+    // Esto implica que si White mueve, su reloj SIGUE corriendo hasta que pulsa el botón.
+    // Entonces 'turnActive' define a quién se le descuenta tiempo.
+
+    game.timers[game.turnActive] = Math.max(0, game.timers[game.turnActive] - delta);
+    game.lastMoveTime = now;
+
+    if (game.timers[game.turnActive] <= 0) {
+        game.timerActive = false;
+        // Broadcast time out?
+    }
+}
+
 io.on('connection', (socket) => {
     console.log('Usuario conectado:', socket.id);
 
-    socket.on('joinGame', (gameId) => {
-        if (!gameId) return;
+    // Bucle del servidor para actualizar timers cada segundo (opcional, o confiar en timestamps)
+    // Para simplificar, calculamos al recibir eventos y enviamos 'timeUpdate'
 
+    socket.on('joinGame', ({ gameId, user }) => {
+        if (!gameId) return;
         socket.join(gameId);
 
         getOrCreateGame(gameId, (game) => {
-            // Enviar estado actual (FEN)
-            socket.emit('gameState', game.chess.fen());
+            // Asignar color si hay hueco
+            let color = null;
+            if (!game.players.white) {
+                game.players.white = { ...user, socketId: socket.id };
+                color = 'white';
+            } else if (!game.players.black) {
+                game.players.black = { ...user, socketId: socket.id };
+                color = 'black';
+            } else {
+                // Espectador o reconexión (si coincide ID, etc. - simple por ahora)
+            }
 
-            // Enviar historial de movimientos (History array)
-            // chess.history() devuelve array de SAN ['e4', 'e5', ...]
-            socket.emit('moveHistory', game.chess.history());
+            socket.emit('initGame', {
+                fen: game.chess.fen(),
+                history: game.chess.history(),
+                players: game.players,
+                timers: game.timers,
+                turnActive: game.turnActive,
+                color: color
+            });
 
-            // Notificar a la sala
-            io.to(gameId).emit('playerJoined', { count: io.sockets.adapter.rooms.get(gameId)?.size });
+            io.to(gameId).emit('playersUpdate', game.players);
+        });
+    });
+
+    socket.on('startGame', (gameId) => {
+        const game = games.get(gameId);
+        if (!game) return;
+
+        game.timerActive = true;
+        game.lastMoveTime = Date.now();
+        io.to(gameId).emit('gameStarted', true);
+    });
+
+    socket.on('switchTurn', (gameId) => {
+        const game = games.get(gameId);
+        if (!game || !game.timerActive) return;
+
+        // Solo puede cambiar turno quien tiene el turno activo
+        // Validar socket.id si quisiéramos seguridad estricta
+
+        updateTimers(game);
+
+        // Cambiar turno de reloj
+        game.turnActive = game.turnActive === 'white' ? 'black' : 'white';
+        // lastMoveTime se resetea en updateTimers implícitamente al actualizar 'now'
+
+        io.to(gameId).emit('timerUpdate', {
+            timers: game.timers,
+            turnActive: game.turnActive
         });
     });
 
     socket.on('move', ({ gameId, move }) => {
         const game = games.get(gameId);
-        // Si el servidor se reinició y el cliente manda move sin haber hecho join (raro, pero posible si reconnect),
-        // idealmente deberíamos cargar el juego. Pero asumimos flujo normal join -> move.
         if (!game) return;
 
         try {
-            // Intentar el movimiento
             const result = game.chess.move(move);
-
             if (result) {
-                // Guardar en DB
+                // DB Save
                 const stmt = db.prepare("INSERT INTO moves (game_id, san, fen) VALUES (?, ?, ?)");
                 stmt.run(gameId, result.san, game.chess.fen());
                 stmt.finalize();
 
-                // Actualizar a todos
-                io.to(gameId).emit('gameState', game.chess.fen());
-                io.to(gameId).emit('moveHistory', game.chess.history());
+                // Lógica de Sonidos
+                let sound = 'move';
+                if (game.chess.isCheckmate()) sound = 'win'; // O win/loss
+                else if (game.chess.isCheck()) sound = 'check';
+                else if (result.captured) sound = 'capture';
+                else if (result.flags.includes('k') || result.flags.includes('q')) sound = 'castle';
 
-                if (game.chess.isGameOver()) {
-                    io.to(gameId).emit('gameOver', {
-                        reason: getGameOverReason(game.chess),
-                        winner: getWinner(game.chess)
-                    });
-                }
+                io.to(gameId).emit('gameState', {
+                    fen: game.chess.fen(),
+                    history: game.chess.history(),
+                    sound: sound,
+                    lastMove: result
+                });
+
+                // IMPORTANTE: NO cambiamos game.turnActive todavía. 
+                // El usuario debe pulsar el reloj.
+
             } else {
                 socket.emit('invalidMove', move);
             }
         } catch (e) {
-            console.error("Movimiento inválido:", e);
-            socket.emit('invalidMove', move);
+            console.error(e);
         }
     });
 
     socket.on('disconnect', () => {
-        console.log('Usuario desconectado:', socket.id);
+        // Manejar desconexión
     });
 });
+
+// Intervalo global para sincronizar relojes cada segundo (opcional para visualización fluida)
+setInterval(() => {
+    games.forEach((game, gameId) => {
+        if (game.timerActive) {
+            updateTimers(game);
+            // Solo emitir si cambió significativamente o cada X segundos para ahorrar ancho de banda
+            // Aquí emitimos siempre para testing
+            /* io.to(gameId).emit('timerTick', game.timers); */
+        }
+    });
+}, 1000);
 
 function getGameOverReason(chess) {
     if (chess.isCheckmate()) return 'checkmate';
