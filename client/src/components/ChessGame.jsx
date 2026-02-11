@@ -54,8 +54,7 @@ export default function ChessGame() {
             setTimers(data.timers);
             setTurnActive(data.turnActive);
             setMyColor(data.color);
-            // Si hay historia, el juego probablemente ya empezó o se reanudó
-            if (data.history.length > 0) setGameStarted(true);
+            setGameStarted(data.gameStarted || false);
         });
 
         socket.on('playersUpdate', (newPlayers) => {
@@ -120,10 +119,6 @@ export default function ChessGame() {
 
     const handleStartGame = () => {
         socket.emit('startGame', gameId);
-    };
-
-    const handleSwitchTurn = () => {
-        socket.emit('switchTurn', gameId);
     };
 
     // react-chessboard v5: callbacks reciben un objeto, no parámetros separados
@@ -227,9 +222,7 @@ export default function ChessGame() {
                             turnActive={turnActive}
                             myColor={myColor}
                             gameStarted={gameStarted}
-                            currentTurn={game.turn()}
                             onStartGame={handleStartGame}
-                            onSwitchTurn={handleSwitchTurn}
                         />
                     </div>
 

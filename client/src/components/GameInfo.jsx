@@ -51,17 +51,11 @@ function PlayerCard({ player, timer, isActive, isTurnToMove }) {
     );
 }
 
-export default function GameInfo({ players, timers, turnActive, myColor, onStartGame, onSwitchTurn, gameStarted }) {
-    // turnActive es 'white' o 'black'
-
-    // Determinar si es mi turno de pulsar el reloj
-    // Regla: "Despues de que un jugador mueva la ficha debe apretar el boton para dar inicio al turno del siguiente jugador."
-    // Significa: Si turnActive es 'white', el reloj de White corre. White debe pulsar para pasar a Black.
-    const canFinishTurn = gameStarted && turnActive === myColor;
+export default function GameInfo({ players, timers, turnActive, myColor, onStartGame, gameStarted }) {
+    const isMyTurn = gameStarted && turnActive === myColor;
 
     return (
         <div className="flex flex-col gap-4 w-full">
-            {/* Player Cards */}
             <PlayerCard
                 player={players.black}
                 timer={timers.black}
@@ -69,7 +63,7 @@ export default function GameInfo({ players, timers, turnActive, myColor, onStart
             />
 
             {/* Central Controls */}
-            <div className="flex items-center justify-center py-2 min-h-[80px]">
+            <div className="flex items-center justify-center py-2 min-h-[60px]">
                 {!gameStarted ? (
                     <button
                         onClick={onStartGame}
@@ -78,19 +72,13 @@ export default function GameInfo({ players, timers, turnActive, myColor, onStart
                         Iniciar Partida
                     </button>
                 ) : (
-                    <button
-                        onClick={onSwitchTurn}
-                        disabled={!canFinishTurn}
-                        className={`
-                    px-8 py-4 rounded-xl font-black text-2xl uppercase tracking-wider shadow-2xl transition-all border-b-4 active:border-b-0 active:translate-y-1
-                    ${canFinishTurn
-                                ? 'bg-red-600 border-red-800 hover:bg-red-500 text-white shadow-red-900/50 cursor-pointer animate-bounce'
-                                : 'bg-neutral-800 border-neutral-900 text-neutral-600 cursor-not-allowed opacity-50'
-                            }
-                `}
-                    >
-                        ⏱️ Finalizar Turno
-                    </button>
+                    <div className={`px-6 py-3 rounded-xl text-center font-bold text-lg uppercase tracking-wide transition-all ${
+                        isMyTurn
+                            ? 'bg-yellow-500/20 border border-yellow-500 text-yellow-400'
+                            : 'bg-neutral-800/50 border border-neutral-700 text-neutral-500'
+                    }`}>
+                        {isMyTurn ? 'Tu turno' : 'Esperando rival...'}
+                    </div>
                 )}
             </div>
 
