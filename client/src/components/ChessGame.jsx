@@ -26,6 +26,9 @@ export default function ChessGame() {
     const [history, setHistory] = useState([]);
     const [gameId, setGameId] = useState('');
 
+    // Ref para acceder al FEN actual dentro de closures de socket
+    const fenRef = useRef(game.fen());
+
     // Estado Multijugador Fase 3
     const [user, setUser] = useState(null); // { name, avatar }
     const [players, setPlayers] = useState({ white: null, black: null });
@@ -45,6 +48,7 @@ export default function ChessGame() {
             const newGame = new Chess(data.fen);
             setGame(newGame);
             setFen(data.fen);
+            fenRef.current = data.fen;
             setHistory(data.history);
             setPlayers(data.players);
             setTimers(data.timers);
@@ -66,6 +70,7 @@ export default function ChessGame() {
             const newGame = new Chess(data.fen);
             setGame(newGame);
             setFen(data.fen);
+            fenRef.current = data.fen;
             setHistory(data.history);
 
             // Reproducir sonido
@@ -80,8 +85,10 @@ export default function ChessGame() {
             setTurnActive(data.turnActive);
         });
 
-        socket.on('invalidMove', () => {
-            setFen(game.fen());
+        socket.on('invalidMove', (move) => {
+            console.warn('[SERVIDOR] Movimiento rechazado:', move);
+            // Usar ref para obtener el FEN actual (no la closure obsoleta)
+            setFen(fenRef.current);
         });
 
         return () => {
@@ -93,6 +100,18 @@ export default function ChessGame() {
             socket.off('invalidMove');
         };
     }, []);
+
+    // Efecto para reconexión (importante en desarrollo con reinicios de servidor)
+    useEffect(() => {
+        function handleConnect() {
+            if (user && gameId) {
+                console.log("Reconectando a la sala...");
+                socket.emit('joinGame', { gameId, user });
+            }
+        }
+        socket.on('connect', handleConnect);
+        return () => socket.off('connect', handleConnect);
+    }, [user, gameId]);
 
     const handleLogin = (userData) => {
         setUser(userData);
@@ -107,14 +126,32 @@ export default function ChessGame() {
         socket.emit('switchTurn', gameId);
     };
 
-    function onDrop(sourceSquare, targetSquare) {
-        if (!gameStarted) return false;
+    // react-chessboard v5: callbacks reciben un objeto, no parámetros separados
+    function onDrag({ piece, square }) {
+        console.log(`[DRAG] Pieza: ${piece.pieceType}, Origen: ${square}, Turno chess.js: ${game.turn()}, Mi color: ${myColor}, Partida iniciada: ${gameStarted}`);
+    }
 
-        // Verificar si es mi turno de mover (aunque no sea mi turno de reloj aún)
-        // El turno de ajedrez lo controla chess.js (game.turn())
-        // El turno de reloj lo controla turnActive
-        if (game.turn() === 'w' && myColor !== 'white') return false;
-        if (game.turn() === 'b' && myColor !== 'black') return false;
+    function onDrop({ sourceSquare, targetSquare }) {
+        console.log(`[DROP] Origen: ${sourceSquare} → Destino: ${targetSquare}`);
+
+        if (!targetSquare) {
+            console.warn('[DROP RECHAZADO] Soltada fuera del tablero');
+            return false;
+        }
+
+        if (!gameStarted) {
+            console.warn('[DROP RECHAZADO] La partida no ha iniciado');
+            return false;
+        }
+
+        if (game.turn() === 'w' && myColor !== 'white') {
+            console.warn('[DROP RECHAZADO] No es mi turno (turno de blancas, soy', myColor + ')');
+            return false;
+        }
+        if (game.turn() === 'b' && myColor !== 'black') {
+            console.warn('[DROP RECHAZADO] No es mi turno (turno de negras, soy', myColor + ')');
+            return false;
+        }
 
         try {
             const tempGame = new Chess(game.fen());
@@ -124,17 +161,28 @@ export default function ChessGame() {
                 promotion: 'q',
             });
 
-            if (!move) return false;
+            if (!move) {
+                console.warn(`[MOVIMIENTO ILEGAL] ${sourceSquare} → ${targetSquare} no es válido según chess.js`);
+                return false;
+            }
 
+            console.log(`[MOVIMIENTO VÁLIDO] ${move.san} (${sourceSquare} → ${targetSquare})`, move);
+
+            // Actualizar estado local inmediatamente (optimista)
+            const newFen = tempGame.fen();
+            setGame(tempGame);
+            setFen(newFen);
+            fenRef.current = newFen;
+
+            // Enviar al servidor
             socket.emit('move', {
                 gameId,
                 move: { from: sourceSquare, to: targetSquare, promotion: 'q' }
             });
 
-            setGame(tempGame);
-            setFen(tempGame.fen());
             return true;
         } catch (e) {
+            console.error(`[ERROR] Excepción en chess.js al intentar ${sourceSquare} → ${targetSquare}:`, e);
             return false;
         }
     }
@@ -179,6 +227,7 @@ export default function ChessGame() {
                             turnActive={turnActive}
                             myColor={myColor}
                             gameStarted={gameStarted}
+                            currentTurn={game.turn()}
                             onStartGame={handleStartGame}
                             onSwitchTurn={handleSwitchTurn}
                         />
@@ -196,14 +245,15 @@ export default function ChessGame() {
                     <div className="absolute inset-0 opacity-5 pointer-events-none" style={{ backgroundImage: 'radial-gradient(circle at 2px 2px, gray 1px, transparent 0)', backgroundSize: '24px 24px' }}></div>
 
                     <div className="h-full w-full max-h-[calc(100vh-4rem)] max-w-[calc(100vh-4rem)] aspect-square shadow-2xl rounded overflow-hidden border-[12px] border-neutral-800 ring-1 ring-neutral-700">
-                        <Chessboard
-                            position={fen}
-                            onPieceDrop={onDrop}
-                            boardOrientation={myColor === 'black' ? 'black' : 'white'}
-                            customDarkSquareStyle={{ backgroundColor: '#779556' }}
-                            customLightSquareStyle={{ backgroundColor: '#ebecd0' }}
-                            animationDuration={200}
-                        />
+                        <Chessboard options={{
+                            position: fen,
+                            onPieceDrag: onDrag,
+                            onPieceDrop: onDrop,
+                            boardOrientation: myColor === 'black' ? 'black' : 'white',
+                            darkSquareStyle: { backgroundColor: '#779556' },
+                            lightSquareStyle: { backgroundColor: '#ebecd0' },
+                            animationDurationInMs: 200,
+                        }} />
                     </div>
                 </div>
 

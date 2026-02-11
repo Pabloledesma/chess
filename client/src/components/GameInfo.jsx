@@ -16,8 +16,8 @@ function PlayerCard({ player, timer, isActive, isTurnToMove }) {
 
     return (
         <div className={`relative p-4 rounded-xl border transition-all duration-300 ${isActive
-                ? 'bg-neutral-800 border-yellow-500 shadow-[0_0_15px_rgba(234,179,8,0.2)]'
-                : 'bg-neutral-900 border-neutral-800 opacity-80'
+            ? 'bg-neutral-800 border-yellow-500 shadow-[0_0_15px_rgba(234,179,8,0.2)]'
+            : 'bg-neutral-900 border-neutral-800 opacity-80'
             }`}>
             <div className="flex items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
@@ -57,7 +57,7 @@ export default function GameInfo({ players, timers, turnActive, myColor, onStart
     // Determinar si es mi turno de pulsar el reloj
     // Regla: "Despues de que un jugador mueva la ficha debe apretar el boton para dar inicio al turno del siguiente jugador."
     // Significa: Si turnActive es 'white', el reloj de White corre. White debe pulsar para pasar a Black.
-    const isMyTurnToSwitch = gameStarted && turnActive === myColor;
+    const canFinishTurn = gameStarted && turnActive === myColor;
 
     return (
         <div className="flex flex-col gap-4 w-full">
@@ -80,10 +80,10 @@ export default function GameInfo({ players, timers, turnActive, myColor, onStart
                 ) : (
                     <button
                         onClick={onSwitchTurn}
-                        disabled={!isMyTurnToSwitch}
+                        disabled={!canFinishTurn}
                         className={`
                     px-8 py-4 rounded-xl font-black text-2xl uppercase tracking-wider shadow-2xl transition-all border-b-4 active:border-b-0 active:translate-y-1
-                    ${isMyTurnToSwitch
+                    ${canFinishTurn
                                 ? 'bg-red-600 border-red-800 hover:bg-red-500 text-white shadow-red-900/50 cursor-pointer animate-bounce'
                                 : 'bg-neutral-800 border-neutral-900 text-neutral-600 cursor-not-allowed opacity-50'
                             }
