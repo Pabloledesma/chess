@@ -1,5 +1,6 @@
 const express = require('express');
 const http = require('http');
+const path = require('path');
 const { Server } = require('socket.io');
 const { Chess } = require('chess.js');
 const sqlite3 = require('sqlite3').verbose();
@@ -11,6 +12,20 @@ const io = new Server(server, {
         origin: "*",
         methods: ["GET", "POST"]
     }
+});
+
+// Endpoint de salud para verificar que el backend está activo
+app.get('/api/health', (req, res) => {
+    res.json({ status: 'ok', uptime: process.uptime() });
+});
+
+// Servir archivos estáticos del frontend (producción)
+const distPath = path.join(__dirname, 'client', 'dist');
+app.use(express.static(distPath));
+
+// Fallback SPA: cualquier ruta no-API devuelve index.html
+app.get('*', (req, res) => {
+    res.sendFile(path.join(distPath, 'index.html'));
 });
 
 // Inicializar SQLite
